@@ -159,55 +159,6 @@ vector<double> getXY(double s, double d, const vector<double> &maps_s, const vec
   return {x,y};
 }
 
-vector<double> JMT(vector< double> start, vector <double> end, double T)
-{
-  /*
-  Calculate the Jerk Minimizing Trajectory that connects the initial state
-  to the final state in time T.
-
-  INPUTS
-
-  start - the vehicles start location given as a length three array
-      corresponding to initial values of [s, s_dot, s_double_dot]
-
-  end   - the desired end state for vehicle. Like "start" this is a
-      length three array.
-
-  T     - The duration, in seconds, over which this maneuver should occur.
-
-  OUTPUT 
-  an array of length 6, each value corresponding to a coefficent in the polynomial 
-  s(t) = a_0 + a_1 * t + a_2 * t**2 + a_3 * t**3 + a_4 * t**4 + a_5 * t**5
-
-  EXAMPLE
-
-  > JMT( [0, 10, 0], [10, 10, 0], 1)
-  [0.0, 10.0, 0.0, 0.0, 0.0, 0.0]
-  */
-
-  MatrixXd A = MatrixXd(3, 3);
-  A << T*T*T, T*T*T*T, T*T*T*T*T,
-        3*T*T, 4*T*T*T,5*T*T*T*T,
-        6*T, 12*T*T, 20*T*T*T;
-    
-  MatrixXd B = MatrixXd(3,1);	    
-  B << end[0]-(start[0]+start[1]*T+.5*start[2]*T*T),
-        end[1]-(start[1]+start[2]*T),
-        end[2]-start[2];
-          
-  MatrixXd Ai = A.inverse();
-
-  MatrixXd C = Ai*B;
-
-  vector <double> result = {start[0], start[1], .5*start[2]};
-  for(int i = 0; i < C.size(); i++)
-  {
-    result.push_back(C.data()[i]);
-  }
-
-  return result;
-}
-
 int main()
 {
   uWS::Hub h;
@@ -250,7 +201,7 @@ int main()
   int lane = 1;
 
   // Have a reference velocity to target
-  double ref_vel = 0; //mph
+  double ref_vel = 0; // mph
 
   h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy, &lane, &ref_vel](uWS::WebSocket<uWS::SERVER> ws, 
               char *data, size_t length, uWS::OpCode opCode)
@@ -300,34 +251,96 @@ int main()
           }
 
           bool too_close = false;
+          double follow_car_speed = 0;
+
+          bool cant_move_left = (lane == 0); // yes, I can short hand to !lane but this is clearer
+          bool cant_move_right = (lane == 2);
+
+          const double distance_to_check = 30;
 
           // find ref_v to use
           for (int i=0; i<sensor_fusion.size(); ++i)
           {
             // car is in my lane
-            float d = sensor_fusion[i][6];
+            const double d = sensor_fusion[i][6];
+            const double vx = sensor_fusion[i][3];
+            const double vy = sensor_fusion[i][4];
+            const double check_speed = sqrt(vx*vx + vy*vy);
+            double check_car_s = sensor_fusion[i][5];
+
+            // if using previous points can project s value out
+            check_car_s += static_cast<double>(prev_size * 0.02 * check_speed);
+
             if (d < (2+4*lane+2) && d > (2+4*lane-2))
             {
-              double vx = sensor_fusion[i][3];
-              double vy = sensor_fusion[i][4];
-              double check_speed = sqrt(vx*vx + vy*vy);
-              double check_car_s = sensor_fusion[i][5];
-
-              // if using previous points can project s value out
-              check_car_s += static_cast<double>(prev_size * 0.02 * check_speed);
               // check s values greater than mine and s gap
-              if ((check_car_s > car_s) && (check_car_s - car_s) < 30)
+              if ((check_car_s > car_s) && ((check_car_s - car_s) < distance_to_check))
               {
-                // Do some logic here, lower reference velocity so we don't crash into the car in front of us
-                // could also flag to try to change lanes.
-                //ref_vel = 29.5; // mph
                 too_close = true;
-                if (lane > 0)
-                {
-                  lane = 0;
-                }
+                follow_car_speed = check_speed / 2.24 - 0.5; // 0.5 to give some buffer
               }
             }
+            // Check left lane
+            else if (!cant_move_left && (d < (2+4*(lane-1)+2) && d > (2+4*(lane-1)-2)))
+            {
+              // check front
+              if ((check_car_s > car_s) && ((check_car_s - car_s) < distance_to_check))
+              {
+                cant_move_left = true;
+              }
+              // check back
+              else if ((check_car_s < car_s) && ((check_car_s - car_s) > distance_to_check))
+              {
+                cant_move_left = true;
+              }
+            }
+            // Check right lane
+            else if (!cant_move_right && (d < (2+4*(lane+1)+2) && d > (2+4*(lane+1)-2)))
+            {
+              // check front
+              if ((check_car_s > car_s) && ((check_car_s - car_s) < distance_to_check))
+              {
+                cant_move_right = true;
+              }
+              // check back
+              else if ((check_car_s < car_s) && ((check_car_s - car_s) > distance_to_check))
+              {
+                cant_move_right = true;
+              }
+            }
+          }
+
+          // decide whether to switch lanes or slow down
+          bool slow_down = false;
+          if (too_close)
+          {
+            if(!cant_move_left)
+            {
+              lane--;
+            }
+            else if(!cant_move_right)
+            {
+              lane++;
+            }
+            else
+            {
+              slow_down = true;
+            }
+          }
+
+          // accelerate at maximum!
+          if (slow_down)
+          {
+            ref_vel -= 0.224;
+          }
+          else if (ref_vel < 49.5)
+          {
+            ref_vel += 0.224;
+          }
+
+          if (ref_vel < follow_car_speed)
+          {
+            ref_vel = follow_car_speed;
           }
 
           // Create a list of widely spaced (x,y) waypoints, evenly spaced at 30m
@@ -423,15 +436,6 @@ int main()
           // Fill up the rest of our path planner after filling it with previous points, here we will always output 50 points
           for (int i=1; i<=50-previous_path_x.size(); ++i)
           {
-            if (too_close)
-            {
-              ref_vel -= 0.224;
-            }
-            else if (ref_vel < 49.5)
-            {
-              ref_vel += 0.224;
-            }
-
             double N = target_dist/(0.02*ref_vel/2.24);
             double x_point = x_add_on + target_x/N;
             double y_point = s(x_point);

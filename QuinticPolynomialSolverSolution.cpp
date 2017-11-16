@@ -10,7 +10,7 @@ using Eigen::MatrixXd;
 using Eigen::VectorXd;
 
 // TODO - complete this function
-vector<double> JMT(vector< double> start, vector <double> end, double T)
+vector<double> JMT(vector<double> start, vector <double> end, double T)
 {
     /*
     Calculate the Jerk Minimizing Trajectory that connects the initial state
@@ -51,7 +51,7 @@ vector<double> JMT(vector< double> start, vector <double> end, double T)
 	MatrixXd C = Ai*B;
 	
 	vector <double> result = {start[0], start[1], .5*start[2]};
-	for(int i = 0; i < C.size(); i++)
+	for(int i = 0; i < C.size(); ++i)
 	{
 	    result.push_back(C.data()[i]);
 	}
