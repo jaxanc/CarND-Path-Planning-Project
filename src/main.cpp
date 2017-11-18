@@ -277,19 +277,13 @@ int main()
               if ((check_car_s > car_s) && ((check_car_s - car_s) < distance_to_check))
               {
                 too_close = true;
-                follow_car_speed = check_speed / 2.24 - 0.5; // 0.5 to give some buffer
+                follow_car_speed = check_speed * 2.24 - 0.5; // 0.5 to give some buffer
               }
             }
             // Check left lane
             else if (!cant_move_left && (d < (2+4*(lane-1)+2) && d > (2+4*(lane-1)-2)))
             {
-              // check front
-              if ((check_car_s > car_s) && ((check_car_s - car_s) < distance_to_check))
-              {
-                cant_move_left = true;
-              }
-              // check back
-              else if ((check_car_s < car_s) && ((check_car_s - car_s) > distance_to_check))
+              if (abs(check_car_s - car_s) < distance_to_check)
               {
                 cant_move_left = true;
               }
@@ -297,13 +291,7 @@ int main()
             // Check right lane
             else if (!cant_move_right && (d < (2+4*(lane+1)+2) && d > (2+4*(lane+1)-2)))
             {
-              // check front
-              if ((check_car_s > car_s) && ((check_car_s - car_s) < distance_to_check))
-              {
-                cant_move_right = true;
-              }
-              // check back
-              else if ((check_car_s < car_s) && ((check_car_s - car_s) > distance_to_check))
+              if (abs(check_car_s - car_s) < distance_to_check)
               {
                 cant_move_right = true;
               }
@@ -338,6 +326,7 @@ int main()
             ref_vel += 0.224;
           }
 
+          // lower bound the speed reduction
           if (ref_vel < follow_car_speed)
           {
             ref_vel = follow_car_speed;
@@ -390,7 +379,7 @@ int main()
           vector<double> next_wp0 = getXY(car_s+30,(2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
           vector<double> next_wp1 = getXY(car_s+60,(2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
           vector<double> next_wp2 = getXY(car_s+90,(2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
-
+          
           ptsx.push_back(next_wp0[0]);
           ptsx.push_back(next_wp1[0]);
           ptsx.push_back(next_wp2[0]);
@@ -413,7 +402,7 @@ int main()
           tk::spline s;
 
           // set (x,y) points to the spline
-          s.set_points(ptsx, ptsy);
+          s.set_points(ptsx, ptsy, true);
 
           // Define the actual (x, y) points we will use for the planner
           vector<double> next_x_vals;
@@ -426,31 +415,17 @@ int main()
             next_y_vals.push_back(previous_path_y[i]);
           }
 
-          // Calculate how to break up spline points so that we travel at our desired reference velocity
-          double target_x = 30;
-          double target_y = s(target_x);
-          double target_dist = sqrt(target_x*target_x + target_y*target_y);
-
-          double x_add_on = 0;
+          double x_ref = 0;
+          double y_ref = 0;
 
           // Fill up the rest of our path planner after filling it with previous points, here we will always output 50 points
           for (int i=1; i<=50-previous_path_x.size(); ++i)
           {
-            double N = target_dist/(0.02*ref_vel/2.24);
-            double x_point = x_add_on + target_x/N;
-            double y_point = s(x_point);
+            x_ref += 0.02*ref_vel/2.24;
+            y_ref = s(x_ref);
 
-            x_add_on = x_point;
-
-            double x_ref = x_point;
-            double y_ref = y_point;
-
-            // rotate back to normal after rotating it earlier
-            x_point = x_ref*cos(ref_yaw) - y_ref*sin(ref_yaw);
-            y_point = x_ref*sin(ref_yaw) + y_ref*cos(ref_yaw);
-
-            x_point += ref_x;
-            y_point += ref_y;
+            double x_point = x_ref*cos(ref_yaw) - y_ref*sin(ref_yaw) + ref_x;
+            double y_point = x_ref*sin(ref_yaw) + y_ref*cos(ref_yaw) + ref_y;
 
             next_x_vals.push_back(x_point);
             next_y_vals.push_back(y_point);
