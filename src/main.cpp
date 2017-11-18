@@ -199,11 +199,12 @@ int main()
 
   // Starts in lane 1
   int lane = 1;
+  int newLane = 1;
 
   // Have a reference velocity to target
   double ref_vel = 0; // mph
 
-  h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy, &lane, &ref_vel](uWS::WebSocket<uWS::SERVER> ws, 
+  h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy, &lane, &ref_vel, &newLane](uWS::WebSocket<uWS::SERVER> ws, 
               char *data, size_t length, uWS::OpCode opCode)
   {
     // "42" at the start of the message means there's a websocket message event.
@@ -277,7 +278,11 @@ int main()
               if ((check_car_s > car_s) && ((check_car_s - car_s) < distance_to_check))
               {
                 too_close = true;
-                follow_car_speed = check_speed * 2.24 - 0.5; // 0.5 to give some buffer
+
+                if ((check_speed * 2.24 - 0.5) < follow_car_speed)
+                {
+                  follow_car_speed = check_speed * 2.24 - 0.5; // 0.5 to give some buffer
+                }
               }
             }
             // Check left lane
@@ -304,11 +309,11 @@ int main()
           {
             if(!cant_move_left)
             {
-              lane--;
+              newLane--;
             }
             else if(!cant_move_right)
             {
-              lane++;
+              newLane++;
             }
             else
             {
@@ -320,16 +325,16 @@ int main()
           if (slow_down)
           {
             ref_vel -= 0.224;
+
+            // lower bound the speed reduction
+            if (ref_vel < follow_car_speed)
+            {
+              ref_vel = follow_car_speed;
+            }
           }
           else if (ref_vel < 49.5)
           {
             ref_vel += 0.224;
-          }
-
-          // lower bound the speed reduction
-          if (ref_vel < follow_car_speed)
-          {
-            ref_vel = follow_car_speed;
           }
 
           // Create a list of widely spaced (x,y) waypoints, evenly spaced at 30m
@@ -377,9 +382,11 @@ int main()
 
           // In Frenet add evenly 30m spaced points ahead of the starting reference
           vector<double> next_wp0 = getXY(car_s+30,(2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
-          vector<double> next_wp1 = getXY(car_s+60,(2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
-          vector<double> next_wp2 = getXY(car_s+90,(2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
-          
+          vector<double> next_wp1 = getXY(car_s+60,(2+4*lane + (newLane - lane)/2), map_waypoints_s, map_waypoints_x, map_waypoints_y);
+          vector<double> next_wp2 = getXY(car_s+90,(2+4*newLane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
+
+          lane = newLane;
+
           ptsx.push_back(next_wp0[0]);
           ptsx.push_back(next_wp1[0]);
           ptsx.push_back(next_wp2[0]);
@@ -421,7 +428,13 @@ int main()
           // Fill up the rest of our path planner after filling it with previous points, here we will always output 50 points
           for (int i=1; i<=50-previous_path_x.size(); ++i)
           {
-            x_ref += 0.02*ref_vel/2.24;
+            double new_x_ref = x_ref + 0.02*ref_vel/2.24;
+            double new_y_ref = s(x_ref);
+
+            // perform a linear approximation between actual speed and target speed to help maintain speed better
+            double actual_vel = 2.24/0.02 * sqrt((new_x_ref - x_ref) * (new_x_ref - x_ref) + (new_y_ref - y_ref) * (new_y_ref - y_ref));
+
+            x_ref += 0.02*(2*ref_vel - actual_vel)/2.24;
             y_ref = s(x_ref);
 
             double x_point = x_ref*cos(ref_yaw) - y_ref*sin(ref_yaw) + ref_x;
